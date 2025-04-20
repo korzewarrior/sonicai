@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ultrasonic Communication</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    button { margin: 10px; padding: 10px; font-size: 16px; }
+    #log { margin-top: 20px; white-space: pre-wrap; background: #f0f0f0; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Ultrasonic Communication</h1>
+  <button id="startSender">Start Sender</button>
+  <button id="startReceiver">Start Receiver</button>
+  <div id="log"></div>
+
+  <script>
+    const log = (msg) => {
+      document.getElementById('log').textContent += msg + '\\n';
+    };
+
+    document.getElementById('startSender').addEventListener('click', async () => {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 19000; // 19 kHz
+      gainNode.gain.value = 0.5; // Adjust volume
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      log('Sender: 19 kHz tone started');
+
+      // Stop after 1 second
+      setTimeout(() => {
+        oscillator.stop();
+        log('Sender: Tone stopped');
+      }, 1000);
+    });
+
+    document.getElementById('startReceiver').addEventListener('click', async () => {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        log('Receiver: Microphone access granted');
+
+        const detectTone = () => {
+          analyser.getByteFrequencyData(dataArray);
+          const nyquist = audioCtx.sampleRate / 2;
+          const targetFreq = 19000; // 19 kHz
+          const index = Math.round(targetFreq / nyquist * bufferLength);
+          const magnitude = dataArray[index];
+          if (magnitude > 128) { // Threshold
+            log('Receiver: 19 kHz tone detected');
+          }
+          requestAnimationFrame(detectTone);
+        };
+
+        detectTone();
+      } catch (err) {
+        log('Receiver: Microphone access denied');
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
