@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ultrasonic Messenger</title>
+  <title>Ultrasonic Messenger v4</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
     textarea { width: 100%; height: 80px; font-size: 16px; margin-bottom: 10px; }
@@ -12,7 +12,7 @@
   </style>
 </head>
 <body>
-  <h1>Ultrasonic Messenger v3</h1>
+  <h1>Ultrasonic Messenger v4</h1>
 
   <textarea id="message" placeholder="Type your message here..."></textarea><br>
   <button id="send">Send Message</button>
@@ -29,7 +29,10 @@
 
     const FREQ_ZERO = 18000;
     const FREQ_ONE = 19000;
-    const BIT_DURATION = 0.2; // 200ms per bit = slower but more reliable
+    const BIT_DURATION = 0.2; // 200ms per bit
+    const SYNC_HEADER = "10101010";
+    const START_SEQ = "11110000";
+    const END_SEQ = "00001111";
 
     const textToBinary = (text) =>
       text.split('').map(char =>
@@ -40,7 +43,9 @@
       const chars = [];
       for (let i = 0; i < binary.length; i += 8) {
         const byte = binary.slice(i, i + 8);
-        chars.push(String.fromCharCode(parseInt(byte, 2)));
+        if (byte.length === 8) {
+          chars.push(String.fromCharCode(parseInt(byte, 2)));
+        }
       }
       return chars.join('');
     };
@@ -48,7 +53,7 @@
     document.getElementById('send').addEventListener('click', async () => {
       const msg = document.getElementById('message').value.trim();
       if (!msg) return alert('Enter a message first!');
-      const binary = '11111111' + textToBinary(msg) + '00000000';
+      const binary = SYNC_HEADER + START_SEQ + textToBinary(msg) + END_SEQ;
 
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const now = audioCtx.currentTime;
@@ -70,7 +75,7 @@
     document.getElementById('startReceiver').addEventListener('click', async () => {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 4096; // more resolution
+      analyser.fftSize = 4096;
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
 
@@ -81,33 +86,42 @@
         log('Receiver started, listening...');
 
         let binaryStr = '';
-        let lastBitTime = performance.now();
+        let msgActive = false;
+        let lastSampleTime = performance.now();
 
         const detect = () => {
+          const now = performance.now();
+          if (now - lastSampleTime < BIT_DURATION * 1000) {
+            return requestAnimationFrame(detect);
+          }
+          lastSampleTime = now;
+
           analyser.getByteFrequencyData(dataArray);
           const nyquist = audioCtx.sampleRate / 2;
           const indexZero = Math.round(FREQ_ZERO / nyquist * bufferLength);
           const indexOne = Math.round(FREQ_ONE / nyquist * bufferLength);
           const magZero = dataArray[indexZero];
           const magOne = dataArray[indexOne];
-          const now = performance.now();
 
           const threshold = 120;
-          let detected = null;
-
+          let detectedBit = null;
           if (magZero > threshold || magOne > threshold) {
-            detected = magOne > magZero ? '1' : '0';
+            detectedBit = magOne > magZero ? '1' : '0';
+            binaryStr += detectedBit;
 
-            if (now - lastBitTime > BIT_DURATION * 1000 * 0.75) {
-              binaryStr += detected;
-              lastBitTime = now;
+            // Look for message boundaries
+            if (!msgActive && binaryStr.includes(SYNC_HEADER + START_SEQ)) {
+              msgActive = true;
+              binaryStr = ''; // clear everything up to the real message
+              log('[Receiver] Sync & Start sequence detected');
+            }
 
-              if (binaryStr.endsWith('00000000')) {
-                const content = binaryStr.slice(8, -8);
-                const msg = binaryToText(content);
-                log(`Received: "${msg}"`);
-                binaryStr = '';
-              }
+            if (msgActive && binaryStr.includes(END_SEQ)) {
+              const cleanBinary = binaryStr.replace(END_SEQ, '');
+              const msg = binaryToText(cleanBinary);
+              log(`Received: "${msg}"`);
+              msgActive = false;
+              binaryStr = '';
             }
           }
 
