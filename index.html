@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ultrasonic Messenger v7.0</title>
+  <title>Ultrasonic Messenger v7.2</title>
   <style>
     body {
       font-family: sans-serif;
@@ -41,7 +41,7 @@
       padding: 10px;
       height: 120px;
       overflow-y: auto;
-      white-space: pre-wrap;
+      white-space: pre-line;
       border: 1px solid #ccc;
       font-size: 14px;
     }
@@ -52,12 +52,12 @@
   </style>
 </head>
 <body>
-  <h1>Ultrasonic Messenger v7.0</h1>
+  <h1>Ultrasonic Messenger v7.2</h1>
 
   <textarea id="message" placeholder="Type your message here..."></textarea>
   <button id="send">Send Message</button>
   <button id="startReceiver">Start Listening</button>
-  <button id="testTone">Play Test Tone</button>
+  <button id="testTone">Soft Test Tone</button>
 
   <label><input type="checkbox" id="debugToggle"> Show Debug Log</label>
 
@@ -65,8 +65,9 @@
   <div id="debug" style="display: none;">Debug log:</div>
 
   <script>
-    const FREQ_ZERO = 15000;
-    const FREQ_ONE = 16000;
+    const FREQ_ZERO = 14000;
+    const FREQ_ONE = 15000;
+    const TEST_FREQ = 14500;
     const BIT_DURATION = 0.2;
     const SYNC_HEADER = "10101010";
     const START_SEQ = "11110000";
@@ -74,17 +75,15 @@
 
     const log = (msg) => {
       const div = document.getElementById("log");
-      div.textContent += "\\n" + msg;
+      div.innerText += "\n" + msg;
       div.scrollTop = div.scrollHeight;
     };
     const debug = (msg) => {
-      const debugEnabled = document.getElementById("debugToggle").checked;
-      if (debugEnabled) {
-        const div = document.getElementById("debug");
-        div.style.display = "block";
-        div.textContent += "\\n" + msg;
-        div.scrollTop = div.scrollHeight;
-      }
+      if (!document.getElementById("debugToggle").checked) return;
+      const div = document.getElementById("debug");
+      div.style.display = "block";
+      div.innerText += "\n" + msg;
+      div.scrollTop = div.scrollHeight;
     };
 
     const textToBinary = (text) =>
@@ -104,15 +103,16 @@
     document.getElementById("send").addEventListener("click", async () => {
       const msg = document.getElementById("message").value.trim();
       if (!msg) return alert("Enter a message first!");
-      const binary = SYNC_HEADER + START_SEQ + textToBinary(msg) + END_SEQ;
 
+      const binary = SYNC_HEADER + START_SEQ + textToBinary(msg) + END_SEQ;
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       await audioCtx.resume();
+
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
-
       oscillator.type = "sine";
-      gainNode.gain.value = 0;
+      gainNode.gain.value = 0.05; // quiet transmission
+
       oscillator.connect(gainNode).connect(audioCtx.destination);
       oscillator.start();
 
@@ -123,23 +123,17 @@
         const interval = setInterval(() => {
           const bit = binary[i];
           oscillator.frequency.value = bit === "1" ? FREQ_ONE : FREQ_ZERO;
-
-          // smooth fade-in/out to reduce clicks/crackling
-          gainNode.gain.setTargetAtTime(0.5, audioCtx.currentTime, 0.01);
-
           debug(`Bit ${bit} = ${oscillator.frequency.value} Hz`);
-
           i++;
           if (i >= binary.length) {
             clearInterval(interval);
             setTimeout(() => {
-              gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
               oscillator.stop();
               log(`Sent: "${msg}"`);
             }, BIT_DURATION * 1000);
           }
         }, BIT_DURATION * 1000);
-      }, 500);
+      }, 300);
     });
 
     document.getElementById("startReceiver").addEventListener("click", async () => {
@@ -206,44 +200,27 @@
       }
     });
 
-    // TEST TONE
-    let testOsc = null;
-    let testOn = false;
-    let flip = false;
-
     document.getElementById("testTone").addEventListener("click", async () => {
-      if (!testOn) {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        await audioCtx.resume();
-        testOsc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        testOsc.connect(gain).connect(audioCtx.destination);
-        gain.gain.value = 0.4;
-        testOsc.type = "sine";
-        testOsc.frequency.value = FREQ_ZERO;
-        testOsc.start();
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      await audioCtx.resume();
 
-        flip = false;
-        testOn = true;
-        log("Test tone started");
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.value = 0.02; // super quiet
+      const oscillator = audioCtx.createOscillator();
+      oscillator.type = "sine";
+      oscillator.frequency.value = TEST_FREQ;
+      oscillator.connect(gainNode).connect(audioCtx.destination);
+      oscillator.start();
+      log(`Soft test tone: ${TEST_FREQ} Hz (1 second)`);
 
-        window.testInterval = setInterval(() => {
-          flip = !flip;
-          testOsc.frequency.value = flip ? FREQ_ONE : FREQ_ZERO;
-          log(`Tone: ${testOsc.frequency.value} Hz`);
-        }, 1000);
-      } else {
-        testOsc.stop();
-        clearInterval(window.testInterval);
+      setTimeout(() => {
+        oscillator.stop();
         log("Test tone stopped");
-        testOn = false;
-      }
+      }, 1000);
     });
 
-    // Toggle debug log
     document.getElementById("debugToggle").addEventListener("change", (e) => {
-      const debugDiv = document.getElementById("debug");
-      debugDiv.style.display = e.target.checked ? "block" : "none";
+      document.getElementById("debug").style.display = e.target.checked ? "block" : "none";
     });
   </script>
 </body>
