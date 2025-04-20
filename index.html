@@ -8,11 +8,11 @@
     body { font-family: sans-serif; padding: 20px; }
     textarea { width: 100%; height: 80px; font-size: 16px; margin-bottom: 10px; }
     button { margin-right: 10px; padding: 10px 20px; font-size: 16px; }
-    #log { margin-top: 20px; background: #f0f0f0; padding: 10px; height: 150px; overflow-y: auto; white-space: pre-wrap; }
+    #log { margin-top: 20px; background: #f0f0f0; padding: 10px; height: 180px; overflow-y: auto; white-space: pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>Ultrasonic Messenger</h1>
+  <h1>Ultrasonic Messenger v3</h1>
 
   <textarea id="message" placeholder="Type your message here..."></textarea><br>
   <button id="send">Send Message</button>
@@ -29,15 +29,13 @@
 
     const FREQ_ZERO = 18000;
     const FREQ_ONE = 19000;
-    const BIT_DURATION = 0.05; // seconds (50ms)
+    const BIT_DURATION = 0.2; // 200ms per bit = slower but more reliable
 
-    // Text to binary
     const textToBinary = (text) =>
       text.split('').map(char =>
         char.charCodeAt(0).toString(2).padStart(8, '0')
       ).join('');
 
-    // Binary to text
     const binaryToText = (binary) => {
       const chars = [];
       for (let i = 0; i < binary.length; i += 8) {
@@ -50,7 +48,7 @@
     document.getElementById('send').addEventListener('click', async () => {
       const msg = document.getElementById('message').value.trim();
       if (!msg) return alert('Enter a message first!');
-      const binary = '11111111' + textToBinary(msg) + '00000000'; // Start + Stop bytes
+      const binary = '11111111' + textToBinary(msg) + '00000000';
 
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const now = audioCtx.currentTime;
@@ -72,7 +70,7 @@
     document.getElementById('startReceiver').addEventListener('click', async () => {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
+      analyser.fftSize = 4096; // more resolution
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
 
@@ -90,20 +88,22 @@
           const nyquist = audioCtx.sampleRate / 2;
           const indexZero = Math.round(FREQ_ZERO / nyquist * bufferLength);
           const indexOne = Math.round(FREQ_ONE / nyquist * bufferLength);
-
           const magZero = dataArray[indexZero];
           const magOne = dataArray[indexOne];
           const now = performance.now();
 
-          if (magZero > 150 || magOne > 150) {
-            const bit = (magOne > magZero) ? '1' : '0';
+          const threshold = 120;
+          let detected = null;
+
+          if (magZero > threshold || magOne > threshold) {
+            detected = magOne > magZero ? '1' : '0';
+
             if (now - lastBitTime > BIT_DURATION * 1000 * 0.75) {
-              binaryStr += bit;
+              binaryStr += detected;
               lastBitTime = now;
 
-              // Message ends when stop byte detected
               if (binaryStr.endsWith('00000000')) {
-                const content = binaryStr.slice(8, -8); // strip start/stop
+                const content = binaryStr.slice(8, -8);
                 const msg = binaryToText(content);
                 log(`Received: "${msg}"`);
                 binaryStr = '';
