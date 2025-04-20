@@ -3,41 +3,47 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ultrasonic Messenger v5</title>
+  <title>Ultrasonic Messenger v6.1</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
     textarea { width: 100%; height: 80px; font-size: 16px; margin-bottom: 10px; }
-    button { margin-right: 10px; padding: 10px 20px; font-size: 16px; }
-    #log { margin-top: 20px; background: #f0f0f0; padding: 10px; height: 180px; overflow-y: auto; white-space: pre-wrap; }
+    button { margin: 6px 10px 6px 0; padding: 10px 20px; font-size: 16px; }
+    #log {
+      margin-top: 20px;
+      background: #f0f0f0;
+      padding: 10px;
+      height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
-  <h1>Ultrasonic Messenger v5</h1>
+  <h1>Ultrasonic Messenger v6.1</h1>
 
   <textarea id="message" placeholder="Type your message here..."></textarea><br>
   <button id="send">Send Message</button>
   <button id="startReceiver">Start Listening</button>
+  <button id="testTone">Play Test Tone</button>
 
   <div id="log"></div>
 
   <script>
     const log = (msg) => {
-      const logDiv = document.getElementById('log');
-      logDiv.textContent += msg + '\\n';
-      logDiv.scrollTop = logDiv.scrollHeight;
+      const div = document.getElementById("log");
+      div.textContent += msg + "\\n";
+      div.scrollTop = div.scrollHeight;
     };
 
     const FREQ_ZERO = 18000;
     const FREQ_ONE = 19000;
-    const BIT_DURATION = 0.2; // 200ms per bit
+    const BIT_DURATION = 0.2; // 200ms
     const SYNC_HEADER = "10101010";
     const START_SEQ = "11110000";
     const END_SEQ = "00001111";
 
     const textToBinary = (text) =>
-      text.split('').map(char =>
-        char.charCodeAt(0).toString(2).padStart(8, '0')
-      ).join('');
+      text.split("").map((c) => c.charCodeAt(0).toString(2).padStart(8, "0")).join("");
 
     const binaryToText = (binary) => {
       const chars = [];
@@ -47,38 +53,44 @@
           chars.push(String.fromCharCode(parseInt(byte, 2)));
         }
       }
-      return chars.join('');
+      return chars.join("");
     };
 
-    document.getElementById('send').addEventListener('click', async () => {
-      const msg = document.getElementById('message').value.trim();
-      if (!msg) return alert('Enter a message first!');
-      const binary = SYNC_HEADER + START_SEQ + textToBinary(msg) + END_SEQ;
+    // ========== SEND MESSAGE ========== //
+    document.getElementById("send").addEventListener("click", async () => {
+      const msg = document.getElementById("message").value.trim();
+      if (!msg) return alert("Enter a message first!");
 
+      const binary = SYNC_HEADER + START_SEQ + textToBinary(msg) + END_SEQ;
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      await audioCtx.resume(); // ensure context is running
+      await audioCtx.resume();
 
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
-      oscillator.type = 'sine';
+      oscillator.type = "sine";
       gainNode.gain.value = 0.5;
       oscillator.connect(gainNode).connect(audioCtx.destination);
       oscillator.start();
 
-      let i = 0;
-      const interval = setInterval(() => {
-        const bit = binary[i];
-        oscillator.frequency.value = (bit === '1') ? FREQ_ONE : FREQ_ZERO;
-        i++;
-        if (i >= binary.length) {
-          clearInterval(interval);
-          oscillator.stop();
-          log(`Sent: "${msg}"`);
-        }
-      }, BIT_DURATION * 1000);
+      log("Sending...");
+      setTimeout(() => {
+        let i = 0;
+        const interval = setInterval(() => {
+          const bit = binary[i];
+          oscillator.frequency.value = bit === "1" ? FREQ_ONE : FREQ_ZERO;
+          log(`Sending bit ${bit} (${oscillator.frequency.value} Hz)`);
+          i++;
+          if (i >= binary.length) {
+            clearInterval(interval);
+            oscillator.stop();
+            log(`Sent: "${msg}"`);
+          }
+        }, BIT_DURATION * 1000);
+      }, 500);
     });
 
-    document.getElementById('startReceiver').addEventListener('click', async () => {
+    // ========== RECEIVE MESSAGE ========== //
+    document.getElementById("startReceiver").addEventListener("click", async () => {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 4096;
@@ -89,9 +101,9 @@
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
-        log('Receiver started, listening...');
+        log("Receiver started. Listening...");
 
-        let binaryStr = '';
+        let binaryStr = "";
         let msgActive = false;
         let lastSampleTime = performance.now();
 
@@ -111,22 +123,24 @@
 
           const threshold = 120;
           let detectedBit = null;
+
           if (magZero > threshold || magOne > threshold) {
-            detectedBit = magOne > magZero ? '1' : '0';
+            detectedBit = magOne > magZero ? "1" : "0";
             binaryStr += detectedBit;
+            log(`Detected bit: ${detectedBit}`);
 
             if (!msgActive && binaryStr.includes(SYNC_HEADER + START_SEQ)) {
               msgActive = true;
-              binaryStr = ''; // reset buffer for clean message
-              log('[Receiver] Sync & Start detected');
+              binaryStr = "";
+              log("[Receiver] Sync & Start Detected");
             }
 
             if (msgActive && binaryStr.includes(END_SEQ)) {
-              const cleanBinary = binaryStr.replace(END_SEQ, '');
-              const msg = binaryToText(cleanBinary);
-              log(`Received: "${msg}"`);
+              const content = binaryStr.replace(END_SEQ, "");
+              const decoded = binaryToText(content);
+              log(`Received: "${decoded}"`);
               msgActive = false;
-              binaryStr = '';
+              binaryStr = "";
             }
           }
 
@@ -135,8 +149,43 @@
 
         detect();
       } catch (err) {
-        log('Microphone access denied');
+        log("Microphone access denied");
         console.error(err);
+      }
+    });
+
+    // ========== TEST TONE ========== //
+    let testOscillator = null;
+    let testRunning = false;
+    let flip = false;
+
+    document.getElementById("testTone").addEventListener("click", async () => {
+      if (!testRunning) {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        await audioCtx.resume();
+        testOscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        testOscillator.type = "sine";
+        gainNode.gain.value = 0.5;
+        testOscillator.connect(gainNode).connect(audioCtx.destination);
+        testOscillator.frequency.value = FREQ_ZERO;
+        testOscillator.start();
+
+        log("Test tone started (18kHz/19kHz alternating)");
+
+        testRunning = true;
+        flip = false;
+
+        window.testToneInterval = setInterval(() => {
+          flip = !flip;
+          testOscillator.frequency.value = flip ? FREQ_ONE : FREQ_ZERO;
+          log(`Tone: ${testOscillator.frequency.value} Hz`);
+        }, 1000);
+      } else {
+        testOscillator.stop();
+        clearInterval(window.testToneInterval);
+        testRunning = false;
+        log("Test tone stopped.");
       }
     });
   </script>
