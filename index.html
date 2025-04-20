@@ -3,44 +3,70 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ultrasonic Communication</title>
+  <title>Ultrasonic Messenger</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
-    button { margin: 10px; padding: 10px; font-size: 16px; }
-    #log { margin-top: 20px; white-space: pre-wrap; background: #f0f0f0; padding: 10px; }
+    textarea { width: 100%; height: 80px; font-size: 16px; margin-bottom: 10px; }
+    button { margin-right: 10px; padding: 10px 20px; font-size: 16px; }
+    #log { margin-top: 20px; background: #f0f0f0; padding: 10px; height: 150px; overflow-y: auto; white-space: pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>Ultrasonic Communication</h1>
-  <button id="startSender">Start Sender</button>
-  <button id="startReceiver">Start Receiver</button>
+  <h1>Ultrasonic Messenger</h1>
+
+  <textarea id="message" placeholder="Type your message here..."></textarea><br>
+  <button id="send">Send Message</button>
+  <button id="startReceiver">Start Listening</button>
+
   <div id="log"></div>
 
   <script>
     const log = (msg) => {
-      document.getElementById('log').textContent += msg + '\\n';
+      const logDiv = document.getElementById('log');
+      logDiv.textContent += msg + '\\n';
+      logDiv.scrollTop = logDiv.scrollHeight;
     };
 
-    document.getElementById('startSender').addEventListener('click', async () => {
+    const FREQ_ZERO = 18000;
+    const FREQ_ONE = 19000;
+    const BIT_DURATION = 0.05; // seconds (50ms)
+
+    // Text to binary
+    const textToBinary = (text) =>
+      text.split('').map(char =>
+        char.charCodeAt(0).toString(2).padStart(8, '0')
+      ).join('');
+
+    // Binary to text
+    const binaryToText = (binary) => {
+      const chars = [];
+      for (let i = 0; i < binary.length; i += 8) {
+        const byte = binary.slice(i, i + 8);
+        chars.push(String.fromCharCode(parseInt(byte, 2)));
+      }
+      return chars.join('');
+    };
+
+    document.getElementById('send').addEventListener('click', async () => {
+      const msg = document.getElementById('message').value.trim();
+      if (!msg) return alert('Enter a message first!');
+      const binary = '11111111' + textToBinary(msg) + '00000000'; // Start + Stop bytes
+
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
+      const now = audioCtx.currentTime;
 
-      oscillator.type = 'sine';
-      oscillator.frequency.value = 19000; // 19 kHz
-      gainNode.gain.value = 0.5; // Adjust volume
+      binary.split('').forEach((bit, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const freq = bit === '1' ? FREQ_ONE : FREQ_ZERO;
+        osc.frequency.value = freq;
+        gain.gain.value = 0.5;
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now + i * BIT_DURATION);
+        osc.stop(now + (i + 1) * BIT_DURATION);
+      });
 
-      oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-
-      oscillator.start();
-      log('Sender: 19 kHz tone started');
-
-      // Stop after 1 second
-      setTimeout(() => {
-        oscillator.stop();
-        log('Sender: Tone stopped');
-      }, 1000);
+      log(`Sent: "${msg}"`);
     });
 
     document.getElementById('startReceiver').addEventListener('click', async () => {
@@ -54,23 +80,43 @@
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
-        log('Receiver: Microphone access granted');
+        log('Receiver started, listening...');
 
-        const detectTone = () => {
+        let binaryStr = '';
+        let lastBitTime = performance.now();
+
+        const detect = () => {
           analyser.getByteFrequencyData(dataArray);
           const nyquist = audioCtx.sampleRate / 2;
-          const targetFreq = 19000; // 19 kHz
-          const index = Math.round(targetFreq / nyquist * bufferLength);
-          const magnitude = dataArray[index];
-          if (magnitude > 128) { // Threshold
-            log('Receiver: 19 kHz tone detected');
+          const indexZero = Math.round(FREQ_ZERO / nyquist * bufferLength);
+          const indexOne = Math.round(FREQ_ONE / nyquist * bufferLength);
+
+          const magZero = dataArray[indexZero];
+          const magOne = dataArray[indexOne];
+          const now = performance.now();
+
+          if (magZero > 150 || magOne > 150) {
+            const bit = (magOne > magZero) ? '1' : '0';
+            if (now - lastBitTime > BIT_DURATION * 1000 * 0.75) {
+              binaryStr += bit;
+              lastBitTime = now;
+
+              // Message ends when stop byte detected
+              if (binaryStr.endsWith('00000000')) {
+                const content = binaryStr.slice(8, -8); // strip start/stop
+                const msg = binaryToText(content);
+                log(`Received: "${msg}"`);
+                binaryStr = '';
+              }
+            }
           }
-          requestAnimationFrame(detectTone);
+
+          requestAnimationFrame(detect);
         };
 
-        detectTone();
+        detect();
       } catch (err) {
-        log('Receiver: Microphone access denied');
+        log('Microphone access denied');
         console.error(err);
       }
     });
